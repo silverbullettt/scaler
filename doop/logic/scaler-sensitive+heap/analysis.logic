@@ -1,0 +1,175 @@
+/**
+ * Scaler-guided context-sensitive pointer analysis. The context elements
+ * can be heap objects (allocation sites) or types. Their *string* representations
+ * are used as the real context elements.
+ */
+
+#include "macros.logic"
+#include "../context-sensitive.logic"
+#include "../library.logic"
+#include "../object-to-type.logic"
+
+// In this analysis, the real context is a pair of *strings*
+// and the real heap context a single *string*.
+
+// The variables ?heapStr* should actually be named ?heapOrTypeStr*.
+ContextFromRealContext[?heapStr1, ?heapStr2] = ?ctx ->
+  Context(?ctx), string(?heapStr1), string(?heapStr2).
+lang:skolem(`ContextFromRealContext).
+RealContext1FromContext[?ctx] = ?heapStr -> 
+  Context(?ctx), string(?heapStr).
+RealContext2FromContext[?ctx] = ?heapStr -> 
+  Context(?ctx), string(?heapStr).
+
+RealContext1FromContext[?ctx] = ?heapStr1,
+RealContext2FromContext[?ctx] = ?heapStr2 <- 
+  ContextFromRealContext[?heapStr1, ?heapStr2] = ?ctx.
+
+
+HContextFromRealHContext[?heapStr] = ?hctx ->
+  HContext(?hctx), string(?heapStr).
+lang:skolem(`HContextFromRealHContext).
+RealHContextFromHContext[?hctx] = ?heapStr -> 
+  HContext(?hctx), string(?heapStr).
+
+RealHContextFromHContext[?hctx] = ?heap <-
+  HContextFromRealHContext[?heap] = ?hctx.
+
+// Creating special immutable heap allocation constant
+ImmutableHeapValue[] = "<<immutable>>".
+
+// Create initial objects with their heapcontexts.
+HContextFromRealHContext[?heapStr] = ?hctx,
+HContext(?hctx),
+SystemThreadGroup(?hctx, ?alloc) <-
+  MySystemThreadGroup(?heap, ?alloc),
+  HeapAllocationValue(?heap, ?heapStr).
+
+HContextFromRealHContext[?heapStr] = ?hctx,
+HContext(?hctx),
+MainThreadGroup(?hctx, ?alloc) <-
+  MyMainThreadGroup(?heap, ?alloc),
+  HeapAllocationValue(?heap, ?heapStr).
+
+HContextFromRealHContext[?heapStr] = ?hctx,
+HContext(?hctx),
+MainThread(?hctx, ?alloc) <-
+  MyMainThread(?heap, ?alloc),
+  HeapAllocationValue(?heap, ?heapStr).
+
+
+/**
+ * Merge optimization hack
+ */
+/* Disable original optimization.
+// For this analysis, we only need two of the parameters that may 
+// influence the new context object.
+MyMergeBasis(?hctx, ?heap) <-
+  MergeBasis(_, _, ?hctx, ?heap).
+
+// We create new context objects sparingly, because of the high cost.
+// We also cache them, so they can be looked up without a join.
+Context(?calleeCtx),
+ContextFromRealContext[RealHContextFromHContext[?hctx],?heap] = ?calleeCtx,
+OptimizeMerge[?hctx, ?heap] = ?calleeCtx <-
+  MyMergeBasis(?hctx, ?heap).
+*/
+
+// ------------------------ *Key rules* begin -----------------------
+// Extend MyMergeBasis by adding ?tomethod which influences
+// the decision of new generated contexts.
+MyMergeBasis(?hctx, ?heap, ?tomethod) <-
+  MergeBasis(_, _, ?hctx, ?heap, ?tomethod).
+
+// Handle special context objects.
+SpecialContextObject(?heapStr) -> string(?heapStr).
+SpecialContextObject("<<jvm-startup>>").
+SpecialContextObject("<<initial-context>>").
+SpecialContextObject("<<class-initialization>>").
+SpecialContextObject("<<immutable>>").
+
+OptHContextFromMergeBasis(?hctx) <-
+  MyMergeBasis(?hctx, _, _).
+
+// ToTypeValue maps a (heap or type) string to a string representation of a type.
+// It is useful for generating 2-type-sensitive contexts.
+// If the given string already represents a type, then return it directly.
+ToTypeValue[?typeValue] = ?typeValue <-
+  OptHContextFromMergeBasis(?hctx),
+  RealHContextFromHContext[?hctx] = ?typeValue,
+  Type:Value(_:?typeValue).
+
+// If the given string represents a heap object, then return the string
+// of the type which declares the allocation site of the heap object.
+ToTypeValue[?heapOrType] = ?typeValue <-
+  OptHContextFromMergeBasis(?hctx),
+  RealHContextFromHContext[?hctx] = ?heapOrType,
+  !Type:Value(_:?heapOrType),
+  HeapAllocationValue(?heap, ?heapOrType),
+  !SpecialContextObject(?heapOrType),
+  DeclaringClassAllocation[?heap] = ?type,
+  Type:Value(?type:?typeValue).
+
+// Handle special context objects.
+ToTypeValue[?heapStr] = ?heapStr <-
+  SpecialContextObject(?heapStr).
+
+Scaler2objContext(?method) <-
+  ScalerMethodContext(?method, "2-object").
+
+// The following five rules enable Doop to select different context-sensitivities
+// for different target methods based on the Scaler's results (i.e., ScalerMethodContext).
+// OptimizeMerge is also extended to take ?tomethod into account.
+Context(?calleeCtx),
+ContextFromRealContext[RealHContextFromHContext[?hctx],?heapValue] = ?calleeCtx,
+OptimizeMerge[?hctx, ?heap, ?tomethod] = ?calleeCtx <-
+  MyMergeBasis(?hctx, ?heap, ?tomethod),
+  Scaler2objContext(?tomethod),
+  HeapAllocationValue(?heap, ?heapValue).
+
+Context(?calleeCtx),
+ContextFromRealContext[?typeValue1,?typeValue2] = ?calleeCtx,
+OptimizeMerge[?hctx, ?heap, ?tomethod] = ?calleeCtx <-
+  MyMergeBasis(?hctx, ?heap, ?tomethod),
+  ScalerMethodContext(?tomethod, "2-type"),
+  ToTypeValue[RealHContextFromHContext[?hctx]] = ?typeValue1,
+  DeclaringClassAllocation[?heap] = ?type,
+  Type:Value(?type:?typeValue2).
+
+Context(?calleeCtx),
+ContextFromRealContext[ImmutableHeapValue[],?typeValue] = ?calleeCtx,
+OptimizeMerge[?hctx, ?heap, ?tomethod] = ?calleeCtx <-
+  MyMergeBasis(?hctx, ?heap, ?tomethod),
+  ScalerMethodContext(?tomethod, "1-type"),
+  DeclaringClassAllocation[?heap] = ?type,
+  Type:Value(?type:?typeValue).
+
+Context(?calleeCtx),
+ContextFromRealContext[ImmutableHeapValue[],ImmutableHeapValue[]] = ?calleeCtx,
+OptimizeMerge[?hctx, ?heap, ?tomethod] = ?calleeCtx <-
+  MyMergeBasis(?hctx, ?heap, ?tomethod),
+  ScalerMethodContext(?tomethod, "context-insensitive").
+
+// ------------------------- *Key rules* end ------------------------
+  
+/**
+ * Reachable
+ */
+ReachableContext(?ctx, ?method),
+ContextFromRealContext["<<initial-context>>","<<initial-context>>"] = ?ctx,
+Context(?ctx)
+ <-
+  MainMethodDeclaration(?method).
+
+ReachableContext(?ctx, ?method),
+ContextFromRealContext["<<jvm-startup>>","<<jvm-startup>>"] = ?ctx,
+Context(?ctx)
+ <-
+  ImplicitReachable(?method).
+
+ReachableContext(?ctx, ?clinit),
+ContextFromRealContext["<<class-initialization>>","<<class-initialization>>"] = ?ctx,
+Context(?ctx)
+ <-
+  InitializedClass(?class),
+  ClassInitializer[?class] = ?clinit.
