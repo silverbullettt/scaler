@@ -2,7 +2,7 @@ This is the implementation of the technique proposed in our ESEC/FSE'18 paper "[
 SCALER is the first pointer analysis that ensures scalability (as good as context insensitivity) while achieving great precision (comparable to, or better than the best scalable context-sensitive variants).
 The artifact of our paper can be downloaded from [here](http://www.brics.dk/scaler/FSE18-Artifact-Scaler.tar.gz).
 
-**Note: Now we have integrated Scaler in [Tai-e](https://github.com/pascal-lab/Tai-e), an easy-to-learn/use static analysis framework for Java. We recommend you using Scaler in [Tai-e](https://github.com/pascal-lab/Tai-e).**
+**Note: Now we have integrated SCALER in [Tai-e](https://github.com/pascal-lab/Tai-e), an easy-to-learn/use static analysis framework for Java. We recommend you using SCALER in [Tai-e](https://github.com/pascal-lab/Tai-e).**
 
 To demonstrate the usefulness of SCALER to pointer analysis, we have integrated SCALER with [DOOP](https://bitbucket.org/yanniss/doop) ([PLDI'14 artifact version](http://cgi.di.uoa.gr/~smaragd/pldi14ae/pldi14-ae.tgz)), a state-of-the-art context-sensitive points-to analysis framework for Java. For your convenience, this repository also contains the DOOP framework with SCALER integrated.
 
